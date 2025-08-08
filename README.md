@@ -1,30 +1,69 @@
-# Weather mood setter app
+<img width="3188" height="1202" alt="frame (3)" src="https://github.com/user-attachments/assets/517ad8e9-ad22-457d-9538-a9e62d137cd7" />
 
-*Automatically synced with your [v0.dev](https://v0.dev) deployments*
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/nevin-johnsons-projects/v0-weather-mood-setter-app)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.dev-black?style=for-the-badge)](https://v0.dev/chat/projects/zyVJWECYOwo)
+# [Project Name] 🎯
 
-## Overview
 
-This repository will stay in sync with your deployed chats on [v0.dev](https://v0.dev).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.dev](https://v0.dev).
+## Basic Details
+### Team Name: [Name]
 
-## Deployment
 
-Your project is live at:
+### Team Members
+- Member 1: Nevin Johnson - Sahrdaya College Of Advanced Studies
+- Member 2: Pavithra Pradeepkumar - Sahrdaya College Of Advanced Studies
 
-**[https://vercel.com/nevin-johnsons-projects/v0-weather-mood-setter-app](https://vercel.com/nevin-johnsons-projects/v0-weather-mood-setter-app)**
+### Project Description
+2Mood Setter is a calming, minimalist web app that changes based on real-time weather to match and enhance your mood. It blends smooth visuals, ambient themes, and optional user preferences using Supabase for a personalized, peaceful experience.
 
-## Build your app
+### The Problem (that doesn't exist)
+People spend hours overthinking, doom-scrolling, or staring into the void. I built Mood Setter to gently hijack that loop — by giving them a soothing, weather-matched escape that’s both pointless and peaceful. It’s like emotional aromatherapy... but for your screen. 🧘‍♂️🌧️✨
 
-Continue building your app on:
+### The Solution (that nobody asked for)
+I pair the user’s current weather with a perfectly matched vibe — calming visuals, sounds, and quotes — to hijack their mood and gently pull them out of the overthinking spiral. It’s like a virtual hug from the weather gods. 🌥️💆‍♀️🎶
 
-**[https://v0.dev/chat/projects/zyVJWECYOwo](https://v0.dev/chat/projects/zyVJWECYOwo)**
+## Technical Details
+### Technologies/Components Used
+Languages Used:
+JavaScript
+HTML
+CSS
+Frameworks Used:
+Vercel v0 (React-based framework for frontend)
+Libraries Used:
+Supabase (for database and auth)
+Weather API (e.g., OpenWeatherMap – to fetch current weather)
+Tailwind CSS (for minimalist styling)
+Tools Used:
+Figma (for UI design)
+Vercel (for deployment)
+Supabase Studio (for managing backend/database)
+GitHub (for version control)
+### Implementation
+For Software:
+# Installation
+[commands]
 
-## How It Works
+# Run
+[commands]
 
-1. Create and modify your project using [v0.dev](https://v0.dev)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+### Project Documentation
+For Software:
+
+# Screenshots (Add at least 3)
+![Screenshot1](Add screenshot 1 here with proper name)
+*Add caption explaining what this shows*
+
+![Screenshot2](Add screenshot 2 here with proper name)
+*Add caption explaining what this shows*
+
+![Screenshot3](Add screenshot 3 here with proper name)
+*Add caption explaining what this shows*
+
+
+---
+Made with ❤️ at TinkerHub Useless Projects 
+
+![Static Badge](https://img.shields.io/badge/TinkerHub-24?color=%23000000&link=https%3A%2F%2Fwww.tinkerhub.org%2F)
+![Static Badge](https://img.shields.io/badge/UselessProjects--25-25?link=https%3A%2F%2Fwww.tinkerhub.org%2Fevents%2FQ2Q1TQKX6Q%2FUseless%2520Projects)
+
+
