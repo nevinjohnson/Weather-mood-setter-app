@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { Separator } from "@/components/ui/separator"
-import { Cloud, CloudFog, CloudRain, Snowflake, Sun, Zap, Heart, MapPin, Music, Quote, Camera, UploadCloud, LocateFixed } from 'lucide-react'
+import { Cloud, CloudFog, CloudRain, Snowflake, Sun, Zap, Heart, MapPin, Music, Quote, Camera, UploadCloud, LocateFixed, AlertTriangle, RefreshCw, Wand2 } from 'lucide-react'
 import Image from "next/image"
 import { MoodBackground } from "@/components/mood-background"
 import { type MoodKey, getMoodForWeather, getMoodMeta, isRomanticMood } from "@/lib/moods"
-import { AmbientPlayer } from "@/components/ambient-player"
+import { MoodAudioPlayer } from "@/components/mood-audio"
+import { playlists, type Track } from "@/lib/playlists"
 
 type WeatherData = {
   city: string
@@ -41,8 +42,19 @@ function getClientId(): string {
     window.localStorage.setItem(key, id)
     return id
   } catch {
-    // Fallback if localStorage not available
     return Math.random().toString(36).slice(2)
+  }
+}
+
+function owMainForMood(m: MoodKey) {
+  switch (m) {
+    case "sunny": return "Clear"
+    case "rainy": return "Rain"
+    case "cloudy": return "Clouds"
+    case "foggy": return "Mist"
+    case "snowy": return "Snow"
+    case "stormy": return "Thunderstorm"
+    default: return "Clear"
   }
 }
 
@@ -58,15 +70,39 @@ export default function Page() {
   const [saved, setSaved] = useState(false)
   const [usingDemo, setUsingDemo] = useState(false)
 
+  // Escape Mode (manual vibe)
+  const [escapeMode, setEscapeMode] = useState(false)
+  const [manualMood, setManualMood] = useState<MoodKey>("rainy")
+
   const clientIdRef = useRef<string>("")
 
   useEffect(() => {
     clientIdRef.current = getClientId()
-    // Try to fetch existing crush
     void fetchCrush()
   }, [])
 
+  // Keep UI mood in sync when Escape Mode is active
+  useEffect(() => {
+    if (escapeMode) {
+      setMood(manualMood)
+      // Ensure a pleasant synthetic "weather" when no live data is present
+      setAskingLocation(false)
+      setUsingDemo(false)
+      setWeather({
+        city: "Escape",
+        country: "",
+        tempC: 22,
+        tempF: Math.round(22 * 9/5 + 32),
+        description: getMoodMeta(manualMood).subtitle,
+        main: owMainForMood(manualMood),
+        icon: null,
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [escapeMode, manualMood])
+
   const moodMeta = useMemo(() => getMoodMeta(mood), [mood])
+  const currentPlaylist: Track[] = useMemo(() => playlists[mood], [mood])
 
   async function fetchCrush() {
     try {
@@ -77,15 +113,17 @@ export default function Page() {
         setCrush({ name: data.crush.name ?? "", photoUrl: data.crush.photo_url ?? null })
         setHasCrush(!!data.crush.name || !!data.crush.photo_url)
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
-  function useMyLocation() {
+  async function useMyLocation() {
     setError(null)
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setError("Location only works over HTTPS. Enter a city or try Escape Mode.")
+      return
+    }
     if (!("geolocation" in navigator)) {
-      setError("Geolocation is not supported. Please enter your city.")
+      setError("Geolocation is not supported. Please enter your city or try Escape Mode.")
       return
     }
     setLoading(true)
@@ -101,6 +139,7 @@ export default function Page() {
           if (!res.ok) throw new Error(data.error || "Failed to fetch weather")
           applyWeather(data)
           setAskingLocation(false)
+          setEscapeMode(false)
         } catch (e: any) {
           setError(e.message || "Unable to fetch weather.")
         } finally {
@@ -109,26 +148,27 @@ export default function Page() {
       },
       (err) => {
         setLoading(false)
-        setError(err.message || "Location permission denied. Please enter your city.")
+        setError(err.message || "Location permission denied. Please enter your city or try Escape Mode.")
       },
-      { enableHighAccuracy: false, maximumAge: 300000, timeout: 12000 }
+      { enableHighAccuracy: true, maximumAge: 120000, timeout: 15000 }
     )
   }
 
-  async function submitCity() {
-    if (!cityInput.trim()) return
+  async function submitCity(demo = false) {
+    if (!demo && !cityInput.trim()) return
     setError(null)
     setLoading(true)
     try {
       const res = await fetch("/api/weather", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city: cityInput.trim() }),
+        body: JSON.stringify(demo ? { demo: true, city: cityInput.trim() || undefined } : { city: cityInput.trim() }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to fetch weather")
       applyWeather(data)
       setAskingLocation(false)
+      setEscapeMode(false)
     } catch (e: any) {
       setError(e.message || "Unable to fetch weather.")
     } finally {
@@ -149,7 +189,6 @@ export default function Page() {
     setWeather(w)
     const m = getMoodForWeather(data.main)
     setMood(m)
-    // Log mood (fire-and-forget)
     void fetch("/api/log-mood", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -161,26 +200,50 @@ export default function Page() {
         city: w.city,
       }),
     }).then(() => setSaved(true)).catch(() => {})
-
     setUsingDemo(!!data.demo)
+  }
+
+  async function refreshWeather() {
+    setError(null)
+    setLoading(true)
+    try {
+      if (escapeMode) {
+        // Just re-apply the manual mood to refresh texts/playlist if needed
+        setMood(manualMood)
+        setTimeout(() => setLoading(false), 300)
+        return
+      }
+      if (weather?.city) {
+        const res = await fetch("/api/weather", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ city: weather.city }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || "Failed to fetch weather")
+        applyWeather(data)
+      } else if (cityInput.trim()) {
+        await submitCity(false)
+      } else {
+        setAskingLocation(true)
+        return
+      }
+    } catch (e: any) {
+      setError(e.message || "Unable to fetch weather.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   function MoodIcon({ size = 28 }: { size?: number }) {
     switch (mood) {
-      case "sunny":
-        return <Sun size={size} className="text-yellow-400 drop-shadow" />
-      case "rainy":
-        return <CloudRain size={size} className="text-blue-300" />
-      case "cloudy":
-        return <Cloud size={size} className="text-slate-300" />
-      case "foggy":
-        return <CloudFog size={size} className="text-gray-300" />
-      case "snowy":
-        return <Snowflake size={size} className="text-cyan-200" />
-      case "stormy":
-        return <Zap size={size} className="text-yellow-200" />
-      default:
-        return <Sun size={size} />
+      case "sunny": return <Sun size={size} className="text-yellow-400 drop-shadow" />
+      case "rainy": return <CloudRain size={size} className="text-blue-300" />
+      case "cloudy": return <Cloud size={size} className="text-slate-300" />
+      case "foggy": return <CloudFog size={size} className="text-gray-300" />
+      case "snowy": return <Snowflake size={size} className="text-cyan-200" />
+      case "stormy": return <Zap size={size} className="text-yellow-200" />
+      default: return <Sun size={size} />
     }
   }
 
@@ -198,6 +261,20 @@ export default function Page() {
     return messages[Math.floor(Math.random() * messages.length)]
   }, [crush.name, mood])
 
+  const MoodChip = ({ k, label, icon }: { k: MoodKey; label: string; icon: React.ReactNode }) => (
+    <button
+      type="button"
+      className={`rounded-full border px-3 py-1.5 text-sm flex items-center gap-2 transition-colors ${
+        manualMood === k ? "bg-primary text-primary-foreground border-primary" : "bg-white/60 hover:bg-white/80"
+      }`}
+      onClick={() => setManualMood(k)}
+      aria-pressed={manualMood === k}
+    >
+      {icon}
+      {label}
+    </button>
+  )
+
   return (
     <main className="relative min-h-[100dvh] w-full overflow-hidden">
       <MoodBackground mood={mood} />
@@ -206,14 +283,74 @@ export default function Page() {
           <MoodIcon size={22} />
           <span className="font-medium tracking-wide">Weather Mood</span>
           <Badge variant="secondary" className="ml-2 bg-white/20 text-white border-white/20">beta</Badge>
-          {usingDemo && (
-            <Badge variant="secondary" className="ml-2 bg-amber-200/60 text-amber-900 border-amber-300/60">
-              demo
-            </Badge>
-          )}
+          {usingDemo && <Badge variant="secondary" className="ml-2 bg-amber-200/60 text-amber-900 border-amber-300/60">demo</Badge>}
+          {escapeMode && <Badge variant="secondary" className="ml-2 bg-purple-200/70 text-purple-900 border-purple-300/60">escape</Badge>}
         </div>
 
-        {askingLocation && (
+        {/* Escape Mode chooser */}
+        <Card className="w-full max-w-4xl bg-white/70 backdrop-blur-md border-white/40 shadow-xl">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-2 mb-2">
+              <Wand2 className="text-primary" />
+              <h2 className="text-xl font-semibold">Choose your vibe</h2>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              Slip into an atmosphere. Pick a weather mood and drift away with a matching playlist.
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              <MoodChip k="sunny" label="Sunny" icon={<Sun className="h-4 w-4 text-yellow-500" />} />
+              <MoodChip k="rainy" label="Rainy" icon={<CloudRain className="h-4 w-4 text-blue-500" />} />
+              <MoodChip k="cloudy" label="Cloudy" icon={<Cloud className="h-4 w-4 text-slate-500" />} />
+              <MoodChip k="foggy" label="Foggy" icon={<CloudFog className="h-4 w-4 text-gray-500" />} />
+              <MoodChip k="snowy" label="Snowy" icon={<Snowflake className="h-4 w-4 text-cyan-500" />} />
+              <MoodChip k="stormy" label="Stormy" icon={<Zap className="h-4 w-4 text-yellow-400" />} />
+            </div>
+
+            <div className="mt-4 flex items-center gap-2">
+              {!escapeMode ? (
+                <Button onClick={() => setEscapeMode(true)}>
+                  Start escape
+                </Button>
+              ) : (
+                <>
+                  <Button variant="secondary" onClick={() => setEscapeMode(false)}>
+                    Exit escape
+                  </Button>
+                  <Button variant="ghost" onClick={() => setManualMood(manualMood)}>
+                    Recenter
+                  </Button>
+                </>
+              )}
+              <span className="text-xs text-muted-foreground">
+                Tip: In Rainy vibe, you’ll hear a gentle rain bed for extra coziness.
+              </span>
+            </div>
+
+            {/* Playlist preview */}
+            <div className="mt-6 rounded-xl border bg-white/60 backdrop-blur p-4">
+              <div className="flex items-center gap-2 text-sm font-medium mb-2">
+                <Music className="h-4 w-4" /> Playlist for {manualMood}
+              </div>
+              <ul className="grid sm:grid-cols-2 gap-2">
+                {playlists[manualMood].map((t, i) => (
+                  <li key={i}>
+                    <a href={t.url} target="_blank" rel="noreferrer" className="group flex items-center gap-2">
+                      <span className="text-xs w-6 h-6 inline-flex items-center justify-center rounded-full bg-primary/10 text-primary border border-primary/20">
+                        {i + 1}
+                      </span>
+                      <span className="font-medium group-hover:underline">{t.title}</span>
+                      <span className="text-xs text-muted-foreground">— {t.artist}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Location card (only shown when not in Escape Mode and no weather yet) */}
+        {!escapeMode && askingLocation && (
           <Card className="w-full max-w-xl bg-white/70 backdrop-blur-md border-white/40 shadow-xl">
             <CardContent className="p-6">
               <div className="flex items-center gap-2 mb-2">
@@ -221,7 +358,7 @@ export default function Page() {
                 <h2 className="text-xl font-semibold">Set your location</h2>
               </div>
               <p className="text-sm text-muted-foreground mb-4">
-                We use your location or city to set today&apos;s vibe. Your mood is logged anonymously to make the experience feel more personal next time.
+                Use your location or enter a city to set today&apos;s vibe. We only log moods anonymously.
               </p>
               <div className="grid gap-3">
                 <div className="flex items-center gap-2">
@@ -233,7 +370,7 @@ export default function Page() {
                     className="flex items-center gap-2"
                     onSubmit={(e) => {
                       e.preventDefault()
-                      void submitCity()
+                      void submitCity(false)
                     }}
                   >
                     <Label htmlFor="city" className="sr-only">City</Label>
@@ -241,12 +378,24 @@ export default function Page() {
                     <Button type="submit" variant="secondary" disabled={loading}>Go</Button>
                   </form>
                 </div>
-                {error && <p className="text-sm text-red-600">{error}</p>}
+                {error && (
+                  <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div className="space-y-1">
+                      <p>{error}</p>
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => submitCity(true)}>Try demo data</Button>
+                        <a className="text-xs underline opacity-80" href="/api/weather?diagnostics=1" target="_blank" rel="noreferrer">Check API key</a>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
         )}
 
+        {/* Main scene card */}
         {!askingLocation && weather && (
           <div className="w-full max-w-4xl">
             <Card className="bg-white/70 backdrop-blur-md border-white/40 shadow-2xl overflow-hidden">
@@ -257,7 +406,9 @@ export default function Page() {
                       <div className="flex items-center gap-3">
                         <MapPin className="text-primary/80" />
                         <div>
-                          <div className="text-lg font-semibold">{weather.city}, {weather.country}</div>
+                          <div className="text-lg font-semibold">
+                            {escapeMode ? "Escape" : `${weather.city}, ${weather.country}`}
+                          </div>
                           <div className="text-xs text-muted-foreground capitalize">{weather.description}</div>
                         </div>
                       </div>
@@ -272,18 +423,16 @@ export default function Page() {
                     </div>
 
                     <div className="mt-6 flex items-end gap-4">
-                      <div className="text-6xl md:text-7xl font-bold tracking-tight">{Math.round(weather.tempC)}°C</div>
-                      <div className="text-muted-foreground mb-2">{Math.round(weather.tempF)}°F</div>
-                      <div className="ml-auto">
-                        <MoodIcon size={44} />
-                      </div>
+                      <div className="text-6xl md:text-7xl font-bold tracking-tight">{escapeMode ? "" : Math.round(weather.tempC) + "°C"}</div>
+                      {!escapeMode && <div className="text-muted-foreground mb-2">{Math.round(weather.tempF)}°F</div>}
+                      <div className="ml-auto"><MoodIcon size={44} /></div>
                     </div>
 
                     <div className="mt-6 rounded-xl border bg-white/60 backdrop-blur p-4">
                       <p className="text-lg leading-relaxed">
-                        {romantic ? romanticLine : moodMeta.message}
+                        {escapeMode ? `Welcome to your ${manualMood} escape. ${moodMeta.message}` : romantic ? romanticLine : moodMeta.message}
                       </p>
-                      {romantic && hasCrush && (
+                      {romantic && hasCrush && !escapeMode && (
                         <div className="mt-4 flex items-center gap-3">
                           <div className="relative h-12 w-12 rounded-full overflow-hidden ring-2 ring-rose-300 shadow">
                             {crush.photoUrl ? (
@@ -303,11 +452,24 @@ export default function Page() {
 
                     <div className="mt-6 grid gap-4 sm:grid-cols-2">
                       <div className="rounded-xl border bg-white/60 backdrop-blur p-4">
-                        <div className="flex items-center gap-2 text-sm font-medium mb-2"><Music className="h-4 w-4" /> Mood track</div>
-                        <a href={moodMeta.suggestion.url} target="_blank" rel="noreferrer" className="block group">
-                          <div className="font-semibold group-hover:underline">{moodMeta.suggestion.title}</div>
-                          <div className="text-xs text-muted-foreground">{moodMeta.suggestion.artist}</div>
-                        </a>
+                        <div className="flex items-center gap-2 text-sm font-medium mb-2"><Music className="h-4 w-4" /> {escapeMode ? "Escape playlist" : "Mood track"}</div>
+                        {escapeMode ? (
+                          <ul className="space-y-2">
+                            {currentPlaylist.map((t, i) => (
+                              <li key={i}>
+                                <a href={t.url} target="_blank" rel="noreferrer" className="group">
+                                  <div className="font-semibold group-hover:underline">{t.title}</div>
+                                  <div className="text-xs text-muted-foreground">{t.artist}</div>
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <a href={moodMeta.suggestion.url} target="_blank" rel="noreferrer" className="block group">
+                            <div className="font-semibold group-hover:underline">{moodMeta.suggestion.title}</div>
+                            <div className="text-xs text-muted-foreground">{moodMeta.suggestion.artist}</div>
+                          </a>
+                        )}
                       </div>
                       <div className="rounded-xl border bg-white/60 backdrop-blur p-4">
                         <div className="flex items-center gap-2 text-sm font-medium mb-2"><Quote className="h-4 w-4" /> Quote</div>
@@ -324,11 +486,14 @@ export default function Page() {
                           setHasCrush(!!(c.name || c.photoUrl))
                         }}
                       />
-                      <Button variant="ghost" onClick={() => {
-                        setAskingLocation(true)
-                        setError(null)
-                      }}>
-                        Change location
+                      {!escapeMode && (
+                        <Button variant="ghost" onClick={() => { setAskingLocation(true); setError(null) }}>
+                          Change location
+                        </Button>
+                      )}
+                      <Button variant="ghost" onClick={() => void refreshWeather()} disabled={loading} className="gap-2">
+                        <RefreshCw className="h-4 w-4" />
+                        {loading ? "Refreshing..." : "Refresh"}
                       </Button>
                       <div className="ml-auto flex items-center gap-2">
                         {saved ? (
@@ -340,13 +505,9 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Right visual panel */}
                   <div className="relative min-h-[260px] hidden md:block">
-                    {/* Decorative overlay */}
                     <div className="absolute inset-0">
-                      {/* Soft vignette */}
                       <div className="absolute inset-0 bg-gradient-to-l from-black/10 to-transparent" />
-                      {/* Animated shapes based on mood */}
                       <MoodBackground mood={mood} variant="side" />
                     </div>
                   </div>
@@ -357,9 +518,10 @@ export default function Page() {
         )}
 
         <footer className="mt-8 text-xs text-white/80">
-          Pro tip: bookmark this and set it as your morning ritual.
+          Pro tip: turn on Escape Mode, press Play, and just breathe for 5 minutes.
         </footer>
-        <AmbientPlayer mood={mood} suggestion={moodMeta.suggestion} />
+        {/* For immersive audio, feed the effective mood (escape or live) */}
+        <MoodAudioPlayer mood={mood} suggestion={moodMeta.suggestion} />
       </div>
     </main>
   )
@@ -404,11 +566,7 @@ function CrushDialog({
             <div className="flex items-center gap-3">
               <div className="relative h-14 w-14 rounded-full overflow-hidden ring-2 ring-rose-300">
                 {file ? (
-                  <img
-                    src={URL.createObjectURL(file) || "/placeholder.svg"}
-                    alt="Preview"
-                    className="h-full w-full object-cover"
-                  />
+                  <img src={URL.createObjectURL(file) || "/placeholder.svg"} alt="Preview" className="h-full w-full object-cover" />
                 ) : defaultCrush.photoUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={defaultCrush.photoUrl || "/placeholder.svg"} alt="Crush" className="h-full w-full object-cover" />
@@ -418,15 +576,7 @@ function CrushDialog({
                 )}
               </div>
               <div className="flex-1">
-                <Input
-                  id="crush-photo"
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null
-                    setFile(f)
-                  }}
-                />
+                <Input id="crush-photo" type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0] || null; setFile(f) }} />
               </div>
             </div>
             <p className="text-xs text-muted-foreground flex items-center gap-1"><Camera className="h-3 w-3" /> Square photos work best.</p>
@@ -438,8 +588,7 @@ function CrushDialog({
           <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
           <Button
             onClick={async () => {
-              setSubmitting(true)
-              setError(null)
+              setSubmitting(true); setError(null)
               try {
                 const form = new FormData()
                 form.append("clientId", getClientId())

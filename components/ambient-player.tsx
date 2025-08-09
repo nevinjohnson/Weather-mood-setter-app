@@ -17,18 +17,17 @@ type Props = {
 }
 
 /**
- * AmbientPlayer
- * - Generates lightweight, royalty-free ambient audio via Web Audio
- * - Picks a sound palette based on mood
- * - Crossfades when mood changes
- * - Respects user gesture for autoplay; persists volume/playing preference
+ * AmbientPlayer (Web Audio)
+ * - Synth layers + filtered noise
+ * - Adds a subtle rain loop when mood === "rainy" for deeper immersion
+ * - Crossfades parameters per mood
  */
 export function AmbientPlayer({ mood, suggestion, className }: Props) {
   const [isReady, setIsReady] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [volume, setVolume] = useState<number>(() => {
     const saved = typeof window !== "undefined" ? window.localStorage.getItem("ambient-volume") : null
-    return saved ? Number(saved) : 0.5
+    return saved ? Number(saved) : 0.6
   })
   const [show, setShow] = useState(true)
 
@@ -44,6 +43,11 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
   const filterRef = useRef<BiquadFilterNode | null>(null)
   const lfoRef = useRef<OscillatorNode | null>(null)
   const lfoGainRef = useRef<GainNode | null>(null)
+
+  // Rain loop (decoded into a buffer, then started/stopped as needed)
+  const rainBufferRef = useRef<AudioBuffer | null>(null)
+  const rainGainRef = useRef<GainNode | null>(null)
+  const rainSourceRef = useRef<AudioBufferSourceNode | null>(null)
 
   // Persisted preferences
   useEffect(() => {
@@ -61,7 +65,6 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
     }
   }, [volume])
 
-  // Create or resume audio context on demand
   async function ensureAudio() {
     if (typeof window === "undefined") return
     if (!ctxRef.current) {
@@ -69,7 +72,7 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
       ctxRef.current = ctx
       // Master
       const master = ctx.createGain()
-      master.gain.value = 0.0001 // start silent, ramp in
+      master.gain.value = 0.0001
       master.connect(ctx.destination)
       masterGainRef.current = master
 
@@ -88,35 +91,40 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
       noiseGain.gain.value = 0.0
       noiseGainRef.current = noiseGain
 
-      // LFO for gentle motion
+      // Rain layer (post-filter, subtle bed)
+      const rainGain = ctx.createGain()
+      rainGain.gain.value = 0.0
+      rainGainRef.current = rainGain
+
+      // LFO for filter motion
       const lfo = ctx.createOscillator()
-      lfo.frequency.value = 0.08 // very slow
+      lfo.frequency.value = 0.08
       const lfoGain = ctx.createGain()
-      lfoGain.gain.value = 12 // mod amount for filter
+      lfoGain.gain.value = 12
       lfo.connect(lfoGain).connect(filter.frequency)
       lfoRef.current = lfo
       lfoGainRef.current = lfoGain
 
-      // Routing
+      // Routing:
       // osc -> filter -> master
-      oscGain.connect(filter)
       // noise -> filter -> master
+      // rain -> master (bypasses filter to feel "outside")
+      oscGain.connect(filter)
       noiseGain.connect(filter)
       filter.connect(master)
+      rainGain.connect(master)
 
-      // Start constant sources
+      // Start sources
       const { oscA, oscB } = startOscillators(ctx, oscGain)
       oscARef.current = oscA
       oscBRef.current = oscB
       const noise = startNoise(ctx)
       noiseRef.current = noise
-
       lfo.start()
 
       setIsReady(true)
     }
 
-    // Make sure context is running
     if (ctxRef.current?.state === "suspended") {
       await ctxRef.current.resume()
     }
@@ -135,13 +143,10 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
   }
 
   function startNoise(ctx: AudioContext) {
-    // White noise buffer
     const bufferSize = 2 * ctx.sampleRate
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
     const data = buffer.getChannelData(0)
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1
-    }
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1
     const noise = ctx.createBufferSource()
     noise.buffer = buffer
     noise.loop = true
@@ -154,6 +159,44 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
     return ctxRef.current ? ctxRef.current.currentTime : 0
   }
 
+  // Load rain buffer once
+  async function ensureRainBuffer() {
+    if (!ctxRef.current) return
+    if (rainBufferRef.current) return
+    const res = await fetch("/audio/rain.mp3")
+    const arr = await res.arrayBuffer()
+    rainBufferRef.current = await ctxRef.current.decodeAudioData(arr)
+  }
+
+  function startRain() {
+    const ctx = ctxRef.current
+    const buf = rainBufferRef.current
+    if (!ctx || !buf || !rainGainRef.current) return
+    // Stop existing
+    if (rainSourceRef.current) {
+      try { rainSourceRef.current.stop() } catch {}
+      rainSourceRef.current.disconnect()
+      rainSourceRef.current = null
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.loop = true
+    src.connect(rainGainRef.current)
+    src.start()
+    rainSourceRef.current = src
+  }
+
+  function stopRain() {
+    if (rainSourceRef.current) {
+      try { rainSourceRef.current.stop() } catch {}
+      rainSourceRef.current.disconnect()
+      rainSourceRef.current = null
+    }
+    const t0 = now()
+    rainGainRef.current?.gain.cancelScheduledValues(t0)
+    rainGainRef.current?.gain.linearRampToValueAtTime(0.0, t0 + 0.3)
+  }
+
   // Apply mood palette
   function applyMood(targetMood: MoodKey, fast = false) {
     const ctx = ctxRef.current
@@ -162,49 +205,52 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
     const oscGain = oscGainRef.current
     const noiseGain = noiseGainRef.current
     const filter = filterRef.current
-    if (!ctx || !oscA || !oscB || !oscGain || !noiseGain || !filter) return
+    const rainGain = rainGainRef.current
+    if (!ctx || !oscA || !oscB || !oscGain || !noiseGain || !filter || !rainGain) return
 
     const t0 = now()
     const ramp = fast ? 0.3 : 1.2
 
     const palette = getPalette(targetMood)
 
-    // Frequencies
     oscA.frequency.cancelScheduledValues(t0)
     oscB.frequency.cancelScheduledValues(t0)
     oscA.frequency.linearRampToValueAtTime(palette.freqA, t0 + ramp)
     oscB.frequency.linearRampToValueAtTime(palette.freqB, t0 + ramp)
 
-    // Gains
     oscGain.gain.cancelScheduledValues(t0)
     noiseGain.gain.cancelScheduledValues(t0)
     oscGain.gain.linearRampToValueAtTime(palette.oscGain, t0 + ramp)
     noiseGain.gain.linearRampToValueAtTime(palette.noiseGain, t0 + ramp)
 
-    // Filter
     filter.frequency.cancelScheduledValues(t0)
     filter.Q.cancelScheduledValues(t0)
     filter.frequency.linearRampToValueAtTime(palette.filterFreq, t0 + ramp)
     filter.Q.linearRampToValueAtTime(palette.filterQ, t0 + ramp)
+
+    // Rain mix (fade in only if rainy)
+    rainGain.gain.cancelScheduledValues(t0)
+    const targetRain = targetMood === "rainy" ? palette.rainGain ?? 0.3 : 0.0
+    rainGain.gain.linearRampToValueAtTime(targetRain, t0 + ramp)
   }
 
   // Mood palette mapping
   function getPalette(m: MoodKey) {
     switch (m) {
       case "sunny":
-        return { freqA: 220, freqB: 440, oscGain: 0.15, noiseGain: 0.02, filterFreq: 3500, filterQ: 0.8 }
+        return { freqA: 220, freqB: 440, oscGain: 0.15, noiseGain: 0.02, filterFreq: 3500, filterQ: 0.8, rainGain: 0 }
       case "rainy":
-        return { freqA: 174, freqB: 261.6, oscGain: 0.10, noiseGain: 0.06, filterFreq: 1800, filterQ: 0.7 }
+        return { freqA: 174, freqB: 261.6, oscGain: 0.08, noiseGain: 0.05, filterFreq: 1800, filterQ: 0.7, rainGain: 0.35 }
       case "cloudy":
-        return { freqA: 196, freqB: 294, oscGain: 0.11, noiseGain: 0.04, filterFreq: 2200, filterQ: 0.9 }
+        return { freqA: 196, freqB: 294, oscGain: 0.11, noiseGain: 0.04, filterFreq: 2200, filterQ: 0.9, rainGain: 0 }
       case "foggy":
-        return { freqA: 174, freqB: 233, oscGain: 0.09, noiseGain: 0.05, filterFreq: 1200, filterQ: 1.0 }
+        return { freqA: 174, freqB: 233, oscGain: 0.09, noiseGain: 0.05, filterFreq: 1200, filterQ: 1.0, rainGain: 0 }
       case "snowy":
-        return { freqA: 392, freqB: 523.25, oscGain: 0.12, noiseGain: 0.03, filterFreq: 2800, filterQ: 0.6 }
+        return { freqA: 392, freqB: 523.25, oscGain: 0.12, noiseGain: 0.03, filterFreq: 2800, filterQ: 0.6, rainGain: 0 }
       case "stormy":
-        return { freqA: 98, freqB: 147, oscGain: 0.13, noiseGain: 0.07, filterFreq: 1600, filterQ: 1.2 }
+        return { freqA: 98, freqB: 147, oscGain: 0.13, noiseGain: 0.07, filterFreq: 1600, filterQ: 1.2, rainGain: 0 }
       default:
-        return { freqA: 220, freqB: 440, oscGain: 0.12, noiseGain: 0.03, filterFreq: 2400, filterQ: 0.8 }
+        return { freqA: 220, freqB: 440, oscGain: 0.12, noiseGain: 0.03, filterFreq: 2400, filterQ: 0.8, rainGain: 0 }
     }
   }
 
@@ -212,6 +258,17 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
   useEffect(() => {
     if (!isReady) return
     applyMood(mood)
+    // Manage rain source when switching to/from rainy
+    ;(async () => {
+      if (mood === "rainy" && isPlaying) {
+        await ensureAudio()
+        await ensureRainBuffer().catch(() => {})
+        startRain()
+      } else {
+        stopRain()
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mood, isReady])
 
   // Start/stop
@@ -226,8 +283,13 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
       window.localStorage.setItem("ambient-playing", "true")
       window.localStorage.setItem("ambient-consent", "true")
     }
-    // Apply current mood immediately on first play
     applyMood(mood, true)
+    if (mood === "rainy") {
+      try {
+        await ensureRainBuffer()
+        startRain()
+      } catch {}
+    }
   }
 
   function pause() {
@@ -237,17 +299,23 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
     masterGainRef.current.gain.linearRampToValueAtTime(0.0001, t0 + 0.3)
     setIsPlaying(false)
     if (typeof window !== "undefined") window.localStorage.setItem("ambient-playing", "false")
+    stopRain()
   }
 
   // If user previously consented and isPlaying true, try to resume on first interaction
   useEffect(() => {
     if (!isPlaying) return
-    // Attempt resume after a tick (still requires prior gesture if blocked)
     ;(async () => {
       await ensureAudio()
       if (!masterGainRef.current) return
       masterGainRef.current.gain.value = Math.max(volume, 0.0001)
       applyMood(mood, true)
+      if (mood === "rainy") {
+        try {
+          await ensureRainBuffer()
+          startRain()
+        } catch {}
+      }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying])
@@ -301,7 +369,7 @@ export function AmbientPlayer({ mood, suggestion, className }: Props) {
                 <Slider
                   aria-label="Volume"
                   value={[Math.round(volume * 100)]}
-                  onValueChange={(v) => setVolume((v?.[0] ?? 50) / 100)}
+                  onValueChange={(v) => setVolume((v?.[0] ?? 60) / 100)}
                 />
               </div>
 

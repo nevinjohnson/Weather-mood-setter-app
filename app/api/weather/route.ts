@@ -16,19 +16,16 @@ function pick<T>(arr: T[]) {
 }
 
 function getDemoWeather(opts?: { city?: string; reason?: "missing-api-key" | "invalid-api-key" | "forced" }) {
-  const city = opts?.city || "San Francisco"
-  // Weighted to frequently showcase romantic moods (rainy/foggy)
+  const city = opts?.city || "Demo City"
   const demos = [
-    { main: "Rain", description: "light rain", tempC: 18, country: "US" },
-    { main: "Mist", description: "misty", tempC: 16, country: "US" },
-    { main: "Clouds", description: "broken clouds", tempC: 21, country: "US" },
-    { main: "Clear", description: "clear sky", tempC: 27, country: "US" },
-    { main: "Snow", description: "snow showers", tempC: -1, country: "US" },
-    { main: "Thunderstorm", description: "thunder and lightning", tempC: 24, country: "US" },
+    { main: "Rain", description: "light rain", tempC: 18, country: "GB" },
+    { main: "Mist", description: "misty", tempC: 16, country: "IN" },
+    { main: "Clouds", description: "broken clouds", tempC: 21, country: "DE" },
+    { main: "Clear", description: "clear sky", tempC: 27, country: "ES" },
+    { main: "Snow", description: "snow showers", tempC: -1, country: "CA" },
+    { main: "Thunderstorm", description: "thunder and lightning", tempC: 24, country: "BR" },
   ]
-  const weighted = [0, 0, 1, 2, 3, 4, 5, 1, 0] // a little bias to rainy/foggy
-    .map(() => pick(demos))
-  const sel = pick(weighted)
+  const sel = pick(demos)
   return {
     city,
     country: sel.country,
@@ -41,6 +38,109 @@ function getDemoWeather(opts?: { city?: string; reason?: "missing-api-key" | "in
     fallbackReason: opts?.reason || "forced",
   }
 }
+
+// ---------- Open-Meteo fallback (no API key required) ----------
+type MeteoSearch = {
+  results?: Array<{ name: string; country_code?: string; latitude: number; longitude: number }>
+}
+
+type MeteoCurrent = {
+  latitude: number
+  longitude: number
+  current?: { temperature_2m?: number; weather_code?: number }
+  current_weather?: { temperature?: number; weathercode?: number } // legacy shape
+}
+
+function mapMeteoCodeToMain(code: number): { main: string; description: string } {
+  // Based on WMO weather interpretation codes used by Open-Meteo
+  // https://open-meteo.com/en/docs
+  if (code === 0) return { main: "Clear", description: "clear sky" }
+  if ([1, 2, 3].includes(code)) return { main: "Clouds", description: "partly cloudy" }
+  if ([45, 48].includes(code)) return { main: "Mist", description: "foggy" }
+  if ([51, 53, 55, 56, 57].includes(code)) return { main: "Drizzle", description: "light drizzle" }
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { main: "Rain", description: "rain showers" }
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { main: "Snow", description: "snow" }
+  if ([95, 96, 99].includes(code)) return { main: "Thunderstorm", description: "thunderstorm" }
+  return { main: "Clouds", description: "overcast" }
+}
+
+async function meteoByLatLon(lat: number, lon: number) {
+  const url = new URL("https://api.open-meteo.com/v1/forecast")
+  url.searchParams.set("latitude", String(lat))
+  url.searchParams.set("longitude", String(lon))
+  url.searchParams.set("current_weather", "true")
+  url.searchParams.set("temperature_unit", "celsius")
+  const r = await fetch(url.toString(), { cache: "no-store" })
+  if (!r.ok) throw new Error("Open-Meteo forecast failed")
+  const json = (await r.json()) as MeteoCurrent
+
+  // Support both current and current_weather shapes
+  const tempC = typeof json.current?.temperature_2m === "number"
+    ? json.current!.temperature_2m!
+    : typeof (json as any).current_weather?.temperature === "number"
+      ? (json as any).current_weather.temperature
+      : null
+
+  const code = typeof json.current?.weather_code === "number"
+    ? json.current!.weather_code!
+    : typeof (json as any).current_weather?.weathercode === "number"
+      ? (json as any).current_weather.weathercode
+      : null
+
+  if (tempC === null || code === null) throw new Error("Open-Meteo returned incomplete data")
+
+  const { main, description } = mapMeteoCodeToMain(code)
+  return {
+    tempC,
+    main,
+    description,
+  }
+}
+
+async function geocodeCityMeteo(city: string) {
+  const url = new URL("https://geocoding-api.open-meteo.com/v1/search")
+  url.searchParams.set("name", city)
+  url.searchParams.set("count", "1")
+  url.searchParams.set("language", "en")
+  url.searchParams.set("format", "json")
+  const r = await fetch(url.toString(), { cache: "no-store" })
+  if (!r.ok) throw new Error("City geocoding failed")
+  const json = (await r.json()) as MeteoSearch
+  const first = json.results?.[0]
+  if (!first) throw new Error("City not found")
+  return first
+}
+
+async function fallbackFromOpenMeteo(input: { city?: string; lat?: number; lon?: number }) {
+  let cityName = input.city
+  let country = ""
+  let lat = input.lat
+  let lon = input.lon
+
+  if ((typeof lat !== "number" || typeof lon !== "number")) {
+    if (!cityName) throw new Error("Provide either coordinates or a city")
+    const geo = await geocodeCityMeteo(cityName)
+    lat = geo.latitude
+    lon = geo.longitude
+    country = geo.country_code || ""
+    cityName = geo.name || cityName
+  }
+
+  const current = await meteoByLatLon(lat!, lon!)
+  return {
+    city: cityName || "Your City",
+    country,
+    tempC: current.tempC,
+    tempF: toF(current.tempC),
+    description: current.description,
+    main: current.main,
+    icon: null as string | null,
+    provider: "open-meteo" as const,
+    fallbackReason: "openweather-401",
+  }
+}
+
+// ---------------------------------------------------------------
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
@@ -55,13 +155,27 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { city, lat, lon, demo } = (await req.json()) as ReqBody
-    const apiKey = process.env.OPENWEATHER_API_KEY
 
-    // Explicit or implicit demo mode if no key
-    if (demo === true || !apiKey) {
-      return Response.json(getDemoWeather({ city, reason: !apiKey ? "missing-api-key" : "forced" }))
+    if (demo) {
+      return Response.json(getDemoWeather({ city, reason: "forced" }))
     }
 
+    const apiKey = process.env.OPENWEATHER_API_KEY
+
+    // If no key is configured at all, try provider fallback first; if that also fails, message clearly.
+    if (!apiKey) {
+      try {
+        const meteo = await fallbackFromOpenMeteo({ city, lat, lon })
+        return Response.json(meteo)
+      } catch {
+        return Response.json(
+          { error: "Server is missing OPENWEATHER_API_KEY and fallback failed. Add the key or try demo data." },
+          { status: 500 }
+        )
+      }
+    }
+
+    // Build OpenWeather URL
     let url = ""
     const params = new URLSearchParams({ appid: apiKey, units: "metric" })
     if (typeof lat === "number" && typeof lon === "number") {
@@ -79,14 +193,23 @@ export async function POST(req: Request) {
     const json = await r.json()
 
     if (!r.ok) {
+      const status = r.status
       const msg = json?.message || "Failed to fetch weather"
-      // If the key is invalid, transparently fall back to demo data so UX doesn’t break.
-      if (r.status === 401 && String(msg).toLowerCase().includes("invalid")) {
-        return Response.json(getDemoWeather({ city, reason: "invalid-api-key" }))
+      // If invalid key or unauthorized, transparently fall back to Open-Meteo
+      if (status === 401 || /invalid api key/i.test(String(msg))) {
+        try {
+          const meteo = await fallbackFromOpenMeteo({ city, lat, lon })
+          return Response.json(meteo)
+        } catch {
+          // As a last resort, pass through the original error
+          return Response.json({ error: msg }, { status })
+        }
       }
-      return Response.json({ error: msg }, { status: r.status })
+      // Other errors: pass through
+      return Response.json({ error: msg }, { status })
     }
 
+    // Success with OpenWeather
     const main = json?.weather?.[0]?.main ?? "Clear"
     const description = json?.weather?.[0]?.description ?? "clear sky"
     const icon = json?.weather?.[0]?.icon ?? null
@@ -102,9 +225,9 @@ export async function POST(req: Request) {
       description,
       main,
       icon,
+      provider: "openweather" as const,
     })
   } catch (e: any) {
-    // Network or unexpected error → return demo to keep UX smooth
-    return Response.json(getDemoWeather({ reason: "forced" }))
+    return Response.json({ error: e.message || "Unexpected server error" }, { status: 500 })
   }
 }
