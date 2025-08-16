@@ -60,7 +60,7 @@ yarn dev
 *Shows a playlist generated based on the weather and your mood.*
 
 # Diagrams
-![Workflow Diagram](assets/playlist.png)
+![Workflow Diagram](assets/workflow-diagram.png)
 *High-level workflow: User input → Weather API → Mood logic → Output UI.*
 
 ---
