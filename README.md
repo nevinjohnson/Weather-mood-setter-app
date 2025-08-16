@@ -1,4 +1,4 @@
-<img width="900" alt="Weather Mood Setter App Banner" src="https://user-images.githubusercontent.com/517ad8e9-ad22-457d-9538-a9e62d137cd7/your-weather-app-banner.png" />
+<img width="900" alt="useless porject banner" src="assets/useless-proj.png" />
 
 # Weather Mood Setter App ⛅🎶
 
@@ -61,7 +61,7 @@ yarn dev
 
 # Diagrams
 ![Workflow Diagram](assets/workflow-diagram.png)
-This workflow shows how changes pushed to GitHub automatically trigger Vercel builds. Preview deployments are created for every branch, while the production branch (e.g., `main`) gets deployed live to the default `vercel.app` domain or your custom domain.  
+This workflow shows how changes pushed to GitHub automatically trigger Vercel builds. Preview deployments are created for every branch, while the production branch (e.g., `main`) gets deployed live to the default `vercel.app` domain or your custom domain.
 ---
 
 ## Team Contributions
