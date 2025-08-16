@@ -61,8 +61,7 @@ yarn dev
 
 # Diagrams
 ![Workflow Diagram](assets/workflow-diagram.png)
-*High-level workflow: User input → Weather API → Mood logic → Output UI.*
-
+This workflow shows how changes pushed to GitHub automatically trigger Vercel builds. Preview deployments are created for every branch, while the production branch (e.g., `main`) gets deployed live to the default `vercel.app` domain or your custom domain.  
 ---
 
 ## Team Contributions
