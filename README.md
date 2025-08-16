@@ -56,7 +56,7 @@ yarn dev
 ![Weather Results](assets/weather-setter.png)
 *Displays the current weather and suggested mood settings.*
 
-![Playlist Generator](https://github.com/nevinjohnson/Weather-mood-setter-app/assets/your-github-username/playlist-suggestion.png)
+![Playlist Generator](assets/playlist.png)
 *Shows a playlist generated based on the weather and your mood.*
 
 # Diagrams
