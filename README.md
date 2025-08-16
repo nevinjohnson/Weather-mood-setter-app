@@ -50,10 +50,10 @@ yarn dev
 ### Project Documentation
 
 # Screenshots (Add at least 3)
-![Home Screen](https://github.com/nevinjohnson/Weather-mood-setter-app/assets/your-github-username/homepage-screenshot.png)
+![Home Screen](assets/home-screen.png)
 *Landing page where you enter your city and get started.*
 
-![Weather Results](https://github.com/nevinjohnson/Weather-mood-setter-app/assets/your-github-username/weather-results.png)
+![Weather Results](assets/weather-setter.png)
 *Displays the current weather and suggested mood settings.*
 
 ![Playlist Generator](https://github.com/nevinjohnson/Weather-mood-setter-app/assets/your-github-username/playlist-suggestion.png)
