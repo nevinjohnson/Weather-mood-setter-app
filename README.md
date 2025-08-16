@@ -60,7 +60,7 @@ yarn dev
 *Shows a playlist generated based on the weather and your mood.*
 
 # Diagrams
-![Workflow Diagram](https://github.com/nevinjohnson/Weather-mood-setter-app/assets/your-github-username/workflow-diagram.png)
+![Workflow Diagram](assets/playlist.png)
 *High-level workflow: User input → Weather API → Mood logic → Output UI.*
 
 ---
